@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"time"
 
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/smux"
@@ -135,5 +136,29 @@ func yaMuxConfig() *yamux.Config {
 	config.LogOutput = io.Discard
 	config.StreamCloseTimeout = TCPTimeout
 	config.StreamOpenTimeout = TCPTimeout
+	// vload: only KeepAliveInterval is touched here - ConnectionWriteTimeout
+	// is left at yamux's own default (10s) deliberately. yamux reuses that
+	// single field for two very different purposes: how long to wait for a
+	// keepalive ping's reply, and how long to wait for any regular stream
+	// write to succeed. An earlier attempt lowered ConnectionWriteTimeout
+	// to 5s to speed up the first case, and that config was live-tested:
+	// worst-case dead-session detection did drop, but real (not dead),
+	// merely congested writes under normal mobile-network conditions -
+	// which legitimately need more than 5s to flush sometimes - started
+	// getting killed early too, at exactly the new 5s ceiling. Confirmed on
+	// a real device: thousands of connections clustering tightly around
+	// 5.8-5.9s where they previously would have completed normally. That
+	// change was fully reverted.
+	//
+	// Only shortening the interval between keepalive pings - not the reply
+	// timeout - avoids that tradeoff entirely: a healthy connection still
+	// gets the same generous 10s before a write or a ping reply counts as
+	// failed, exactly as before. The only change is checking every 12s
+	// instead of every 30s while otherwise idle, so a session that's
+	// actually gone dead (no traffic to notice it via a failed write) is
+	// still discovered in ~12s+10s=~22s worst case instead of ~30s+10s=40s,
+	// with no change to how long a genuinely slow-but-alive write is given
+	// to complete.
+	config.KeepAliveInterval = 12 * time.Second
 	return config
 }
