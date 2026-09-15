@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"sync"
 	"time"
 
 	E "github.com/sagernet/sing/common/exceptions"
@@ -103,6 +104,16 @@ func (y *yamuxSession) CanTakeNewRequest() bool {
 
 type yamuxWrapStream struct {
 	*yamux.Stream
+	closeOnce sync.Once
+	onClose   func()
+}
+
+func (w *yamuxWrapStream) Close() error {
+	err := w.Stream.Close()
+	if w.onClose != nil {
+		w.closeOnce.Do(w.onClose)
+	}
+	return err
 }
 
 func (w *yamuxWrapStream) Read(p []byte) (n int, err error) {
