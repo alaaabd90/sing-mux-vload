@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"time"
 
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/smux"
@@ -135,5 +136,25 @@ func yaMuxConfig() *yamux.Config {
 	config.LogOutput = io.Discard
 	config.StreamCloseTimeout = TCPTimeout
 	config.StreamOpenTimeout = TCPTimeout
+	// vload: yamux's own defaults (30s between keepalive pings, 10s to wait
+	// for a reply before giving up) mean a session that silently goes bad -
+	// a mobile network handover, a brief signal drop, a carrier NAT timeout
+	// silently dropping the mapping - isn't detected for up to 40s, on top
+	// of whatever the OS's own TCP retransmission backoff adds on top of
+	// that for a write that never gets acknowledged. Every stream sharing
+	// that one connection (mobile-heavy traffic often keeps a handful of
+	// long-lived mux connections warm rather than opening new ones per
+	// request) hangs for the entire detection window. Confirmed on a real
+	// device: multiple unrelated in-flight connections across different
+	// domains stalled together for 51-60 seconds, then all completed
+	// together - the signature of one shared connection dying and
+	// eventually being recovered, not of anything server- or
+	// content-specific. Checking more often and giving up on a
+	// non-responsive ping sooner cuts worst-case detection from ~40s to
+	// ~15s without meaningfully raising the odds of tripping on a merely
+	// slow (not dead) mobile link - a healthy connection replies to a ping
+	// in milliseconds regardless.
+	config.KeepAliveInterval = 10 * time.Second
+	config.ConnectionWriteTimeout = 5 * time.Second
 	return config
 }
