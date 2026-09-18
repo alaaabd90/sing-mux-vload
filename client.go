@@ -196,6 +196,26 @@ func (c *Client) offerNew(ctx context.Context) (abstractSession, error) {
 		Protocol: c.protocol,
 		Padding:  c.padding,
 	})
+	// Finish the lazy transport/protocol write while the dial context is
+	// alive. Session constructors start asynchronous readers/writers; returning
+	// first cancels ctx and can abort a TFO dial before its first write.
+	// No application stream data has been sent yet.
+	handshakeDone := make(chan struct{})
+	stopCancel := context.AfterFunc(ctx, func() {
+		conn.Close()
+		close(handshakeDone)
+	})
+	_, err = conn.Write(nil)
+	if !stopCancel() {
+		<-handshakeDone
+		if err == nil {
+			err = ctx.Err()
+		}
+	}
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
 	if c.padding {
 		conn = newPaddingConn(conn)
 	}
